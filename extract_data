@@ -1,0 +1,41 @@
+# !/bin/sh
+
+mkdir input_resources
+echo 'Converting JSON files to CSV'
+python convert_to_csv.py yelp_academic_dataset_business.json
+python convert_to_csv.py yelp_academic_dataset_review.json
+python convert_to_csv.py yelp_academic_dataset_user.json
+
+echo 'Extracting restaurant data from CSV files'
+##Consider only restaurants out of all the businesses -- 14303
+#First find out the column number of business_id field.
+head -1 input_resources/yelp_academic_dataset_business.csv | sed 's/;/\n/g' | awk '/business_id/ {print FNR}' > input_resources/bid_col
+cat input_resources/yelp_academic_dataset_business.csv | grep "'Restaurants'" | awk -F ";" 'NR==FNR{a=$0;next} {print $a}' input_resources/bid_col -| sed 's/\s*;\s*/;/g' > input_resources/restaurant_ids
+
+echo 'Extracting review data from CSV files'
+# Extract only interested columns for all the reviews -- 1125459. We need to find the column numbers first in order to extract particular columns.
+head -1 input_resources/yelp_academic_dataset_review.csv | sed 's/\[/\n/g' | awk '/review_id/ {print FNR}' > input_resources/review_cols
+head -1 input_resources/yelp_academic_dataset_review.csv | sed 's/\[/\n/g' | awk '/user_id/ {print FNR}' >> input_resources/review_cols
+head -1 input_resources/yelp_academic_dataset_review.csv | sed 's/\[/\n/g' | awk '/business_id/ {print FNR}' >> input_resources/review_cols
+head -1 input_resources/yelp_academic_dataset_review.csv | sed 's/\[/\n/g' | awk '/stars/ {print FNR}' >> input_resources/review_cols
+head -1 input_resources/yelp_academic_dataset_review.csv | sed 's/\[/\n/g' | awk '/text/ {print FNR}' >> input_resources/review_cols
+awk '{printf("%s[", $0)}' input_resources/review_cols > input_resources/r_cols
+cat input_resources/yelp_academic_dataset_review.csv | awk -F "[" 'NR==FNR{rid=$1;uid=$2;bid=$3;st=$4;txt=$5;next} {print $rid"["$uid"["$bid"["$txt"["$st}' input_resources/r_cols - > input_resources/reviews
+
+#Consider the reviews of only restaurants -- 706646
+cat input_resources/reviews | awk -F "[" 'NR==FNR{a[$0];next} ($3 in a)' input_resources/restaurant_ids - > input_resources/restaurant_reviews
+
+echo 'Extracting user data from CSV files'
+## Extract only interested columns for users -- 252899
+head -1 input_resources/yelp_academic_dataset_user.csv | sed 's/;/\n/g' | awk '/user_id/ {print FNR}' > input_resources/user_cols
+head -1 input_resources/yelp_academic_dataset_user.csv | sed 's/;/\n/g' | awk '/review_count/ {print FNR}' >> input_resources/user_cols
+awk '{printf("%s;", $0)}' input_resources/user_cols > input_resources/u_cols
+cat input_resources/yelp_academic_dataset_user.csv | awk -F ";" 'NR==FNR{uid=$1;rcount=$2;next} {print $uid,";",$rcount}' input_resources/u_cols - | sed 's/\s*;\s*/;/g' > input_resources/users
+
+## Consider only those users who provided atleast 11 reviews -- 103508
+cat input_resources/users | awk -F ";" '($2>10) {print $1}' > input_resources/users_with_atleast_11_reviews
+
+echo 'Extracting reviews data of users with revoew count > 10'
+## reviews of users whose review count > 10. Capture text of the reviews in separate file, and other fields in another separate file.
+cat input_resources/restaurant_reviews | awk -F "[" 'NR==FNR{a[$0];next} ($2 in a) {print $4}' input_resources/users_with_atleast_11_reviews - > input_resources/reviews_of_users_with_atleast_11_reviews
+cat input_resources/restaurant_reviews | awk -F "[" 'NR==FNR{a[$0];next} ($2 in a) {print $1 "," $2 "," $3 "," $5}' input_resources/users_with_atleast_11_reviews - | sed 's/\s*,\s*/,/g' > input_resources/reviews_of_users_with_atleast_11_reviews_all_fields
